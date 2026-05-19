@@ -21,12 +21,6 @@ from dir_config import (
 COLUMNS_NEEDED = ["v213", "v453", "v457", "v012", "v201", "v222", "v445", "m45_1"]
 FINAL_SCHEMA   = ["patient_id", "country", "v453", "v457", "v012", "v201", "v222", "v445", "m45_1"]
 
-# Minimum age to include. Under-18 women are excluded because the SKI 2023
-# BMI reference for adolescents uses IMT/U z-scores (WHO 2007), which are
-# not comparable to the adult IMT system used for 18+ women. Keeping only
-# adults ensures a single, consistent BMI classification across all countries.
-MIN_AGE = 18
-
 
 # =============================================================================
 # HELPERS
@@ -46,7 +40,7 @@ def _empty_summary(country, total, note, pregnant=0, valid_hb=0):
 
 def load_country(country_code, filepath):
     """
-    Load one country DTA, filter to pregnant women aged 18+ with valid Hb,
+    Load one country DTA, filter to pregnant women with valid Hb,
     and clean columns.
 
     Returns
@@ -73,19 +67,6 @@ def load_country(country_code, filepath):
     pregnant_count = len(df)
     print(f"[{country_code}] Pregnant women: {pregnant_count}")
 
-    # --- Filter: adults only (18+) ---
-    # Under-18 use a z-score-based IMT/U system (WHO 2007) that is not
-    # comparable to the absolute IMT cutoffs used for adults. Excluding
-    # them keeps BMI classification consistent across all countries.
-    if "v012" in df.columns:
-        before = len(df)
-        df = df[df["v012"] >= MIN_AGE].copy()
-        dropped_age = before - len(df)
-        if dropped_age > 0:
-            print(f"[{country_code}] Dropped {dropped_age} women under {MIN_AGE} (adult-only filter)")
-    else:
-        print(f"[{country_code}] WARNING: v012 (age) not found — age filter skipped.")
-
     # --- Filter: must have Hb data ---
     if "v453" not in df.columns:
         print(f"[{country_code}] WARNING: v453 (Hb) not found. Skipping.")
@@ -95,7 +76,7 @@ def load_country(country_code, filepath):
     # DHS flags missing Hb with codes >= 900 (e.g. 994=not measured, 999=missing)
     df = df[df["v453"] < 900].copy()
     hb_valid_count = len(df)
-    print(f"[{country_code}] Pregnant adults (18+) with valid Hb: {hb_valid_count}")
+    print(f"[{country_code}] Pregnant women with valid Hb: {hb_valid_count}")
 
     if hb_valid_count == 0:
         print(f"[{country_code}] No usable rows after Hb filter. Skipping.")
@@ -124,15 +105,9 @@ def load_country(country_code, filepath):
     if "m45_1" in df.columns:
         df["m45_1"] = df["m45_1"].where(df["m45_1"].isin([0, 1]), other=pd.NA)  # type: ignore
 
-    # v457 (anemia category): derive from v453 using WHO cutoffs for pregnant women
-    # rather than trusting the DHS-stored value, which is missing for ~50% of India rows.
-    # Cutoffs: <7.0=severe(1), 7.0-9.9=moderate(2), 10.0-10.9=mild(3), >=11.0=not anaemic(0)
-    if "v453" in df.columns:
-        hb = df["v453"]
-        df["v457"] = 0
-        df.loc[hb < 7.0, "v457"] = 1
-        df.loc[(hb >= 7.0) & (hb < 10.0), "v457"] = 2
-        df.loc[(hb >= 10.0) & (hb < 11.0), "v457"] = 3
+    # v457 (anemia category): valid codes are 0–3 only; anything else → NA
+    if "v457" in df.columns:
+        df["v457"] = df["v457"].where(df["v457"].isin([0, 1, 2, 3]), other=pd.NA)  # type: ignore
 
     # --- Add identifiers ---
     df = df.reset_index(drop=True)
